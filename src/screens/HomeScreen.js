@@ -27,12 +27,44 @@ const HomeScreen = ({ navigation }) => {
   const [isLocked, setIsLocked] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  const backgroundSync = async () => {
+    try {
+      const userStr = await AsyncStorage.getItem('user');
+      if (!userStr) return;
+      const user = JSON.parse(userStr);
+
+      const deviceInfo = await getDeviceDataForConsole();
+      if (!deviceInfo) return;
+      await apiService.syncDeviceData({
+        userId: user.id,
+        deviceModel: deviceInfo['Device Model'],
+        uniqueId: deviceInfo['Unique ID (IMEI)'],
+        battery: deviceInfo['Battery'],
+        wifiStatus: deviceInfo['Wifi Status'],
+        locationStatus: deviceInfo['Location Tracker'],
+        deviceTimestamp: deviceInfo['Timestamp'],
+      });
+      console.log('Background Sync Successful');
+    } catch (e) {
+      console.log('Background Sync Failed:', e.message);
+    }
+  };
+  // HomeScreen.js
+useEffect(() => {
+  backgroundSync();
+  const syncInterval = setInterval(backgroundSync, 5000); // 5 seconds
+  const lockInterval = setInterval(checkRemoteLock, 5000);
+  return () => {
+    clearInterval(syncInterval);
+    clearInterval(lockInterval);
+  };
+}, []);
   // 1. Backend se Lock Status check karne ka logic (Polling)
   const checkRemoteLock = async () => {
     try {
       const userStr = await AsyncStorage.getItem('user');
       if (!userStr) return;
-      
+
       const user = JSON.parse(userStr);
       const result = await apiService.getLatestDeviceInfo(user.id);
 
@@ -57,7 +89,7 @@ const HomeScreen = ({ navigation }) => {
 
     const backHandler = BackHandler.addEventListener(
       'hardwareBackPress',
-      backAction
+      backAction,
     );
 
     return () => {
@@ -101,7 +133,7 @@ const HomeScreen = ({ navigation }) => {
       if (result.success) {
         Alert.alert(
           'Sync Successful',
-          `Device: ${result.data.deviceModel}\nRemaining: ${result.data.daysLeft}`
+          `Device: ${result.data.deviceModel}\nRemaining: ${result.data.daysLeft}`,
         );
       } else {
         Alert.alert('Sync Failed', result.message || 'Database error');
@@ -115,20 +147,16 @@ const HomeScreen = ({ navigation }) => {
 
   // 3. Logout Functionality
   const handleLogout = () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout from SnapCheck?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Logout',
-          onPress: async () => {
-            await AsyncStorage.clear(); // Clear all saved data
-            navigation.replace('Login'); // Redirect to login and clear stack
-          },
+    Alert.alert('Logout', 'Are you sure you want to logout from SnapCheck?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Logout',
+        onPress: async () => {
+          await AsyncStorage.clear(); // Clear all saved data
+          navigation.replace('Login'); // Redirect to login and clear stack
         },
-      ]
-    );
+      },
+    ]);
   };
 
   return (
@@ -168,7 +196,7 @@ const HomeScreen = ({ navigation }) => {
       <View style={styles.contentCard}>
         <View style={styles.buttonWrapper}>
           <PrimaryButton
-            title={loading ? "Syncing..." : "Monitor Child's Device"}
+            title={loading ? 'Syncing...' : "Monitor Child's Device"}
             onPress={handleMonitorPress}
           />
         </View>
