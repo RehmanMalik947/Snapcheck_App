@@ -3,7 +3,7 @@ import axios from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // Android Emulator ke liye 10.0.2.2, Physical device ke liye laptop ka IP
-const API_URL = "http://192.168.10.20:3000/api"; 
+const API_URL = "http://192.168.10.18:3000/api"; 
 
 class ApiService { 
   constructor() {  
@@ -56,6 +56,20 @@ class ApiService {
       return {
         success: false,
         message: error.response?.data?.message || "Sync failed"
+      };
+    }
+  }
+
+  async getLatestDeviceInfo(userId) {
+    try {
+      // Backend route: /api/device/latest/:userId
+      const response = await this.api.get(`/device/latest/${userId}`);
+      return response.data;
+    } catch (error) {
+      console.log("Get Info Error:", error.message);
+      return {
+        success: false,
+        message: error.response?.data?.message || "Failed to fetch status"
       };
     }
   }

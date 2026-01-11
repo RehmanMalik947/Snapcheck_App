@@ -1,7 +1,15 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Dimensions, Image } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Animated,
+  Dimensions,
+  Image,
+} from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import { COLORS } from '../constants/Colors';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
@@ -13,15 +21,32 @@ const SplashScreen = ({ navigation }) => {
       toValue: 1,
       duration: 3000,
       useNativeDriver: false,
-    }).start(() => {
-        navigation.replace('Login');
+    }).start(async () => {
+      await checkLoginStatus();
     });
   }, []);
 
+  const checkLoginStatus = async () => {
+    try {
+      const token = await AsyncStorage.getItem('authToken');
+      const user = await AsyncStorage.getItem('user');
+      if (token && user) {
+        navigation.replace('Home');
+      } else {
+        navigation.replace('Login');
+      }
+    } catch (error) {
+      console.log('Error Checking auth status', error);
+      navigation.replace('Login');
+    }
+  };
   return (
     <LinearGradient
       // Ensure these match your src/constants/Colors.js exactly
-      colors={[COLORS.gradientStart || '#2A67FF', COLORS.gradientEnd || '#8A20FF']} 
+      colors={[
+        COLORS.gradientStart || '#2A67FF',
+        COLORS.gradientEnd || '#8A20FF',
+      ]}
       style={styles.container}
     >
       <View style={styles.centerContent}>
