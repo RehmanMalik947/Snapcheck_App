@@ -13,6 +13,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import BackgroundTimer from 'react-native-background-timer';
+import notifee, { AndroidImportance } from '@notifee/react-native';
 
 // Custom Components & Services
 import LockScreen from './LockScreen';
@@ -27,133 +29,103 @@ const HomeScreen = ({ navigation }) => {
   const [isLocked, setIsLocked] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const backgroundSync = async () => {
+  // LOGIC: System Information Sync (Independent of heartbeat)
+  const performSystemSync = async () => {
     try {
       const userStr = await AsyncStorage.getItem('user');
       if (!userStr) return;
-      const user = JSON.parse(userStr);
+      const parsedUser = JSON.parse(userStr);
 
       const deviceInfo = await getDeviceDataForConsole();
-      if (!deviceInfo) return;
+
+      // Update hardware states (Battery, WiFi etc)
       await apiService.syncDeviceData({
-        userId: user.id,
-        deviceModel: deviceInfo['Device Model'],
-        uniqueId: deviceInfo['Unique ID (IMEI)'],
-        battery: deviceInfo['Battery'],
-        wifiStatus: deviceInfo['Wifi Status'],
-        locationStatus: deviceInfo['Location Tracker'],
-        deviceTimestamp: deviceInfo['Timestamp'],
+        userId: parsedUser.id,
+        deviceModel: deviceInfo?.['Device Model'] || 'Device',
+        uniqueId: deviceInfo?.['Unique ID (IMEI)'] || 'UniqueId',
+        battery: deviceInfo?.['Battery'] || '0%',
+        wifiStatus: deviceInfo?.['Wifi Status'] || 'OFF',
+        locationStatus: deviceInfo?.['Location Tracker'] || 'OFF',
+        deviceTimestamp: deviceInfo?.['Timestamp'] || new Date().toISOString(),
       });
-      console.log('Background Sync Successful');
+      console.log('--- Hardware States Synced ---');
     } catch (e) {
-      console.log('Background Sync Failed:', e.message);
-    }
-  };
-  // HomeScreen.js
-useEffect(() => {
-  backgroundSync();
-  const syncInterval = setInterval(backgroundSync, 5000); // 5 seconds
-  const lockInterval = setInterval(checkRemoteLock, 5000);
-  return () => {
-    clearInterval(syncInterval);
-    clearInterval(lockInterval);
-  };
-}, []);
-  // 1. Backend se Lock Status check karne ka logic (Polling)
-  const checkRemoteLock = async () => {
-    try {
-      const userStr = await AsyncStorage.getItem('user');
-      if (!userStr) return;
-
-      const user = JSON.parse(userStr);
-      const result = await apiService.getLatestDeviceInfo(user.id);
-
-      if (result && result.success) {
-        // Backend se agar 1 ya true aaye toh lock screen dikhao
-        setIsLocked(!!result.data.isLocked);
-      }
-    } catch (error) {
-      console.log('Lock Check Error:', error);
+      console.log('Sync Error:', e.message);
     }
   };
 
   useEffect(() => {
-    // Har 5 seconds baad status check karein
-    const interval = setInterval(checkRemoteLock, 5000);
+    const activateGuard = async () => {
+      // 1. Channel Creation for Foreground Notification
+      const channelId = await notifee.createChannel({
+        id: 'guardian_active',
+        name: 'Protection Monitor',
+        importance: AndroidImportance.HIGH,
+      });
 
-    // Hardware Back Button ko block karna jab phone locked ho
-    const backAction = () => {
-      if (isLocked) return true; // Kuch na karo (block)
-      return false;
+      // 2. Start Service: This triggers the registerForegroundService in index.js
+      await notifee.displayNotification({
+        id: 'monitor_notification',
+        title: 'SnapCheck: Active Monitoring',
+        body: 'Child device activity is being synced...',
+        android: {
+          channelId,
+          asForegroundService: true, // IMPORTANT FOR BACKGROUND
+          ongoing: true,
+          pressAction: { id: 'default' },
+        },
+      });
     };
 
+    activateGuard();
+    performSystemSync(); // Immediate initial sync
+
+    // LOCK & SYSTEM CHECK INTERVAL (UI refresh logic only)
+    const uiInterval = setInterval(async () => {
+      try {
+        const userStr = await AsyncStorage.getItem('user');
+        if (userStr) {
+          const user = JSON.parse(userStr);
+          const res = await apiService.getLatestDeviceInfo(user.id);
+          if (res?.success) setIsLocked(!!res.data.isLocked);
+        }
+      } catch (e) {
+        console.log('UI Polling Fail');
+      }
+    }, 5000);
+
+    // Disable Back button on Android if locked
+    const backAction = () => (isLocked ? true : false);
     const backHandler = BackHandler.addEventListener(
       'hardwareBackPress',
       backAction,
     );
 
     return () => {
-      clearInterval(interval);
+      clearInterval(uiInterval);
       backHandler.remove();
+      // Notifee stop handle we do only on Logout
     };
   }, [isLocked]);
 
-  // 2. Device Data Sync karne ka logic
   const handleMonitorPress = async () => {
-    try {
-      setLoading(true);
-      const userStr = await AsyncStorage.getItem('user');
-      if (!userStr) {
-        Alert.alert('Error', 'Session expired. Please login again.');
-        return;
-      }
-      const user = JSON.parse(userStr);
-
-      console.log('Fetching Device Data...');
-      const deviceInfo = await getDeviceDataForConsole();
-
-      if (!deviceInfo) {
-        Alert.alert('Error', 'Could not collect device information.');
-        setLoading(false);
-        return;
-      }
-
-      const result = await apiService.syncDeviceData({
-        userId: user.id,
-        deviceModel: deviceInfo['Device Model'],
-        uniqueId: deviceInfo['Unique ID (IMEI)'],
-        battery: deviceInfo['Battery'],
-        wifiStatus: deviceInfo['Wifi Status'],
-        locationStatus: deviceInfo['Location Tracker'],
-        deviceTimestamp: deviceInfo['Timestamp'],
-      });
-
-      setLoading(false);
-
-      if (result.success) {
-        Alert.alert(
-          'Sync Successful',
-          `Device: ${result.data.deviceModel}\nRemaining: ${result.data.daysLeft}`,
-        );
-      } else {
-        Alert.alert('Sync Failed', result.message || 'Database error');
-      }
-    } catch (error) {
-      setLoading(false);
-      console.log('Sync Error:', error);
-      Alert.alert('Error', 'Connection failed. Check if server is running.');
-    }
+    setLoading(true);
+    await performSystemSync();
+    setLoading(false);
+    Alert.alert('Status Sync', 'Device health data sent to parent dashboard.');
   };
 
-  // 3. Logout Functionality
   const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to logout from SnapCheck?', [
+    Alert.alert('Logout', 'Stop child monitoring and exit?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Logout',
         onPress: async () => {
-          await AsyncStorage.clear(); // Clear all saved data
-          navigation.replace('Login'); // Redirect to login and clear stack
+          // Clear all background processes on logout
+          BackgroundTimer.stopBackgroundTimer();
+          await notifee.cancelAllNotifications();
+          await AsyncStorage.clear();
+          navigation.replace('Login');
         },
       },
     ]);
@@ -161,16 +133,13 @@ useEffect(() => {
 
   return (
     <View style={styles.container}>
-      {/* Overlay Lock Screen - Modal hamesha top par rahega */}
       <LockScreen visible={isLocked} />
-
       <StatusBar
         barStyle="light-content"
         translucent={true}
         backgroundColor="transparent"
       />
 
-      {/* Header with Gradient */}
       <LinearGradient
         colors={[COLORS.gradientStart, COLORS.gradientEnd]}
         style={styles.header}
@@ -184,7 +153,6 @@ useEffect(() => {
               style={styles.logo}
               resizeMode="contain"
             />
-            {/* Proper Logout Button */}
             <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
               <Text style={styles.logoutText}>Logout</Text>
             </TouchableOpacity>
@@ -192,13 +160,15 @@ useEffect(() => {
         </SafeAreaView>
       </LinearGradient>
 
-      {/* Main Content Area */}
       <View style={styles.contentCard}>
         <View style={styles.buttonWrapper}>
           <PrimaryButton
             title={loading ? 'Syncing...' : "Monitor Child's Device"}
             onPress={handleMonitorPress}
           />
+          <Text style={styles.guardianText}>
+            PROTECTION ENGINE RUNNING IN BACKGROUND
+          </Text>
         </View>
       </View>
     </View>
@@ -206,25 +176,15 @@ useEffect(() => {
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.gradientEnd,
-  },
-  header: {
-    height: height * 0.25,
-    width: '100%',
-    paddingHorizontal: 20,
-  },
+  container: { flex: 1, backgroundColor: COLORS.gradientEnd },
+  header: { height: height * 0.25, width: '100%', paddingHorizontal: 20 },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginTop: 10,
   },
-  logo: {
-    width: 140,
-    height: 40,
-  },
+  logo: { width: 140, height: 40 },
   logoutBtn: {
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
     paddingHorizontal: 15,
@@ -233,11 +193,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.4)',
   },
-  logoutText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    fontSize: 12,
-  },
+  logoutText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 },
   contentCard: {
     flex: 1,
     backgroundColor: '#F8FAFF',
@@ -248,8 +204,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 30,
   },
-  buttonWrapper: {
-    width: '100%',
+  buttonWrapper: { width: '100%', alignItems: 'center' },
+  guardianText: {
+    marginTop: 15,
+    color: '#94a3b8',
+    fontSize: 10,
+    fontWeight: '800',
   },
 });
 
