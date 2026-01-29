@@ -1,5 +1,4 @@
 package com.snapcheck
-
 import android.app.Application
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
@@ -14,14 +13,15 @@ class MainApplication : Application(), ReactApplication {
       context = applicationContext,
       packageList =
         PackageList(this).packages.apply {
-          // Packages that cannot be autolinked yet can be added manually here, for example:
-          // add(MyReactNativePackage())
+          // ✅ APNA MANUAL PACKAGE YAHAN REGISTER KAREIN:
+          add(UsagePackage()) 
         },
     )
   }
 
   override fun onCreate() {
     super.onCreate()
+    // Native modules linkage aur React Host startup
     loadReactNative(this)
   }
 }

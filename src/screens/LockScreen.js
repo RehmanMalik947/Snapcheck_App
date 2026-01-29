@@ -12,7 +12,7 @@ const LockScreen = ({ visible }) => {
           <Text style={{ fontSize: 50 }}>🔒</Text>
         </View>
         <Text style={styles.title}>Device Locked</Text>
-        <Text style={styles.message}>Device is locked By your Father </Text>
+        <Text style={styles.message}>Device is locked by your Guardians! </Text>
         <Text style={styles.footerText}>Contact parents for emergency</Text>
       </View>
     </Modal>

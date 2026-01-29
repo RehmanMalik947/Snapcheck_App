@@ -1,0 +1,19 @@
+{
+    "sqltools.connections": [
+        {
+            "mysqlOptions": {
+                "authProtocol": "default",
+                "enableSsl": "Disabled"
+            },
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "srv2046.hstgr.io",
+            "port": 3306,
+            "driver": "MySQL",
+            "name": "name",
+            "database": "u890458552_snapcheck",
+            "username": "u890458552_snapcheck",
+            "askForPassword": true
+        }
+    ]
+}

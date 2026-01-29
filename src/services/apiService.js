@@ -1,9 +1,9 @@
 // src/services/ApiService.js
 import axios from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-
+import config from "react-native-config";
 // Android Emulator ke liye 10.0.2.2, Physical device ke liye laptop ka IP
-const API_URL = "http://192.168.10.14:3000/api"; 
+const API_URL = "http://192.168.100.17:3000/api" || config.BASE_API_URL;
 
 class ApiService { 
   constructor() {  
