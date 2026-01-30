@@ -9,7 +9,8 @@ import {
   Alert,
   TouchableOpacity,
   BackHandler,
-  NativeModules, // Clean single import
+  NativeModules,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
@@ -24,77 +25,63 @@ import PrimaryButton from '../components/PrimaryButton';
 import apiService from '../services/apiService';
 import { getDeviceDataForConsole } from '../services/DeviceService';
 import { getDeviceUsageStats } from '../services/UsageService';
-import { AppState } from 'react-native';
 
 const { width, height } = Dimensions.get('window');
-const { UsageModule } = NativeModules; // Native module reference
+const { UsageModule } = NativeModules;
 
 const HomeScreen = ({ navigation }) => {
   const [isLocked, setIsLocked] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  //Permission Check logic
+  // ✅ Logic: Monitor status ki state (Default OFF)
+  const [isMonitoring, setIsMonitoring] = useState(false);
+  const monitoringRef = React.useRef(false);
+
+
   const checkAndRequestAllPermissions = async () => {
-  try {
-    if (UsageModule) {
-      // --- PHASE 1: Usage Access Check ---
-      const hasUsagePerm = await UsageModule.checkPermission();
-      
-      if (!hasUsagePerm) {
-        Alert.alert(
-          'Step 1: Usage Access',
-          'Please enable "Usage Access" in settings!',
-          [
-            { 
-              text: 'Open Settings', 
-              onPress: () => UsageModule.openSettings() 
-            }
-          ],
-          { cancelable: false }
-        );
-        return; // Pehli ijazat mang kar function rok den
-      }
-
-      // --- PHASE 2: Battery Optimization Check ---
-      // Agar pehli mil gayi hai, toh ab doosri check karo
-      const isBatteryUnrestricted = await UsageModule.isBatteryIgnored();
-      
-      if (!isBatteryUnrestricted) {
-        Alert.alert(
-          'Step 2: Battery Optimization',
-          'Set battery usage to "Unrestricted" in settings!',
-          [
-            { 
-              text: 'Configure Battery', 
-              onPress: () => UsageModule.openBatterySettings() 
-            }
-          ],
-          { cancelable: false }
-        );
-      }
-    }
-  } catch (err) {
-    console.log("Permission Workflow Error:", err.message);
-  }
-};
-
-  // --- LOGIC: Button Blocking (Hardware Interaction) ---
-  useEffect(() => {
-    const handleHardwareLock = async () => {
+    try {
       if (UsageModule) {
-        if (isLocked) {
-          console.log('ACTIVATE: Native Button Blocking');
-          await UsageModule.activateLock(); // Kiosk Mode / Pinning Start
-        } else {
-          console.log('DEACTIVATE: Buttons Restored');
-          await UsageModule.deactivateLock(); // Kiosk Mode / Pinning Stop
+        const hasUsagePerm = await UsageModule.checkPermission();
+        if (!hasUsagePerm) {
+          Alert.alert(
+            'Activity Access',
+            'Please enable "Usage Access" in settings to monitor screen time.',
+            [
+              {
+                text: 'Open Settings',
+                onPress: () => UsageModule.openSettings(),
+              },
+            ],
+            { cancelable: false },
+          );
+          return;
+        }
+        const isBatteryUnrestricted = await UsageModule.isBatteryIgnored();
+        if (!isBatteryUnrestricted) {
+          Alert.alert(
+            'Battery Optimization',
+            'Set battery usage to "Unrestricted" for continuous protection.',
+            [
+              {
+                text: 'Configure Battery',
+                onPress: () => UsageModule.openBatterySettings(),
+              },
+            ],
+            { cancelable: false },
+          );
         }
       }
-    };
-    handleHardwareLock();
-  }, [isLocked]); // Yeh tab chalega jab Dashboard se Lock ka signal aayega
+    } catch (err) {
+      console.log('Permission Error:', err.message);
+    }
+  };
 
   const performUniversalSync = async () => {
+
+    if(!monitoringRef.current){
+      console.log("Mositoring stopped, skipping sync.");
+      return;
+    }
     try {
       const userStr = await AsyncStorage.getItem('user');
       if (!userStr) return;
@@ -105,7 +92,7 @@ const HomeScreen = ({ navigation }) => {
       const deviceInfo = await getDeviceDataForConsole();
       if (deviceInfo) {
         await apiService.syncDeviceData({
-          userId: user.id, // Fixed: parsedUser was incorrect
+          userId: user.id,
           deviceModel: deviceInfo['Device Model'] || 'Device',
           uniqueId: deviceInfo['Unique ID (IMEI)'] || 'UniqueId',
           battery: deviceInfo['Battery'] || '0%',
@@ -126,73 +113,100 @@ const HomeScreen = ({ navigation }) => {
       const lockRes = await apiService.getLatestDeviceInfo(user.id);
       if (lockRes?.success) setIsLocked(!!lockRes.data.isLocked);
 
-      console.log('--- Snapshot Shipped OK ---');
+      console.log('--- Heartbeat Sync Success ---');
     } catch (e) {
       console.log('Pulse Error:', e.message);
     }
   };
 
-  useEffect(() => {
-    const runProtection = async () => {
-      const channelId = await notifee.createChannel({
-        id: 'guard',
-        name: 'Safe Guard',
-      });
-      await notifee.displayNotification({
-        title: 'Protection Shield: ON',
-        body: 'Activity and health stats are synced.',
-        android: {
-          channelId,
-          asForegroundService: true,
-          ongoing: true,
-          pressAction: { id: 'default' },
-        },
-      });
-      BackgroundTimer.runBackgroundTimer(performUniversalSync, 20000);
-    };
+  // ✅ MONITORING CONTROL LOGIC (Start/Stop)
+  const startMonitoringEngine = async () => {
+    const channelId = await notifee.createChannel({
+      id: 'guard',
+      name: 'Safe Guard',
+    });
+    await notifee.displayNotification({
+      title: 'Monitoring Engaged',
+      body: 'Child device activity is synced with parent dashboard.',
+      android: {
+        channelId,
+        asForegroundService: true,
+        ongoing: true,
+        pressAction: { id: 'default' },
+      },
+    });
+    monitoringRef.current = true;
+    setIsMonitoring(true);
 
-    runProtection();
-    performUniversalSync();
+    performUniversalSync(); // Immediate Sync
+    BackgroundTimer.runBackgroundTimer(performUniversalSync, 15000);
+    setIsMonitoring(true);
+    Alert.alert('Protection ON', 'The device monitoring has started.');
+  };
+
+  const stopMonitoringEngine = async () => {
+    monitoringRef.current = false;
+    setIsMonitoring(false);
+    BackgroundTimer.stopBackgroundTimer();
+    await notifee.cancelAllNotifications();
+    Alert.alert('Protection OFF', 'Background monitoring is now paused.');
+  };
+
+  const handleToggleMonitoring = async () => {
+    setLoading(true);
+    if (isMonitoring) {
+      await stopMonitoringEngine();
+    } else {
+      await startMonitoringEngine();
+    }
+    setLoading(false);
+  };
+
+  // UI Protection logic only
+  useEffect(() => {
+    const handleHardwareLock = async () => {
+      if (UsageModule && typeof UsageModule.activateLock === 'function') {
+        if (isLocked) await UsageModule.activateLock();
+        else await UsageModule.deactivateLock();
+      }
+    };
+    handleHardwareLock();
 
     const backHandler = BackHandler.addEventListener(
       'hardwareBackPress',
       () => isLocked,
     );
 
+    // ✅ Silent lock check - Phone unlock karne ke liye polling humesha slow background mein rahegi
+    const silentLockCheck = setInterval(async () => {
+      const userStr = await AsyncStorage.getItem('user');
+      if (userStr) {
+        const user = JSON.parse(userStr);
+        const res = await apiService.getLatestDeviceInfo(user.id);
+        if (res?.success) setIsLocked(!!res.data.isLocked);
+      }
+    }, 10000);
+
     return () => {
-      BackgroundTimer.stopBackgroundTimer();
       backHandler.remove();
+      clearInterval(silentLockCheck);
     };
   }, [isLocked]);
 
   useEffect(() => {
-    // 1. App khulne par foran check karein
     checkAndRequestAllPermissions();
-
-    // 2. Agar user settings se wapas SnapCheck par aaye (App becomes active), 
-    // toh dubara check karein ke kya ijazat mil gayi?
     const subscription = AppState.addEventListener('change', nextAppState => {
-      if (nextAppState === 'active') {
-        checkAndRequestAllPermissions();
-      }
+      if (nextAppState === 'active') checkAndRequestAllPermissions();
     });
-
     return () => subscription.remove();
-}, []);
-  
-  const handleMonitorPress = async () => {
-    setLoading(true);
-    await performUniversalSync();
-    setLoading(false);
-    Alert.alert('Live Status', 'Dashboard updated with latest snapshots.');
-  };
+  }, []);
 
   return (
     <View style={styles.container}>
       <LockScreen visible={isLocked} />
       <StatusBar
         barStyle="light-content"
-        translucent={true}
+        translucent
         backgroundColor="transparent"
       />
       <LinearGradient
@@ -217,14 +231,24 @@ const HomeScreen = ({ navigation }) => {
           </View>
         </SafeAreaView>
       </LinearGradient>
+
       <View style={styles.contentCard}>
         <View style={styles.buttonWrapper}>
           <PrimaryButton
-            title={loading ? 'Syncing...' : "Monitor Child's Device"}
-            onPress={handleMonitorPress}
+            // ✅ Button label depends on state
+            title={
+              loading
+                ? 'Processing...'
+                : isMonitoring
+                ? 'Stop Monitoring'
+                : "Monitor Child's Device"
+            }
+            onPress={handleToggleMonitoring}
           />
           <Text style={styles.guardianText}>
-            ACTIVE GUARD RUNNING IN BACKGROUND
+            {isMonitoring
+              ? 'ENGINE IS RUNNING IN BACKGROUND'
+              : 'SYSTEM IS IDLE (TAP TO START)'}
           </Text>
         </View>
       </View>
@@ -232,6 +256,7 @@ const HomeScreen = ({ navigation }) => {
   );
 };
 
+// Styles Unchanged...
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.gradientEnd },
   header: { height: height * 0.25, width: '100%', paddingHorizontal: 20 },
