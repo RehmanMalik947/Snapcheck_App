@@ -3,8 +3,8 @@ import axios from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import config from "react-native-config";
 // Android Emulator ke liye 10.0.2.2, Physical device ke liye laptop ka IP
-const API_URL = "http://192.168.10.6:3000/api" || config.BASE_API_URL;
 
+const API_URL = config.BASE_API_URL || "https://appbackend.snapcheck.io/api";
 class ApiService { 
   constructor() {  
     this.api = axios.create({

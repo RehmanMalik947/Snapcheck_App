@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react'; // Added useRef
 import {
   View,
   StyleSheet,
@@ -32,39 +32,70 @@ const { UsageModule } = NativeModules;
 const HomeScreen = ({ navigation }) => {
   const [isLocked, setIsLocked] = useState(false);
   const [loading, setLoading] = useState(false);
-
-  // ✅ Logic: Monitor status ki state (Default OFF)
   const [isMonitoring, setIsMonitoring] = useState(false);
-  const monitoringRef = React.useRef(false);
+  const [remainingSeconds, setRemainingSeconds] = useState(0);
 
+  const monitoringRef = useRef(false);
+  const isAlertVisible = useRef(false); // ✅ Prevents duplicate popups
+
+  // HELPER: Format seconds to HH:MM:SS
+  const formatTime = totalSeconds => {
+    if (totalSeconds <= 0) return '00:00';
+    const hrs = Math.floor(totalSeconds / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+    return `${hrs > 0 ? hrs + ':' : ''}${mins < 10 ? '0' + mins : mins}:${
+      secs < 10 ? '0' + secs : secs
+    }`;
+  };
 
   const checkAndRequestAllPermissions = async () => {
+    // ✅ Exit if an alert is already shown to avoid "Alert Fatigue"
+    if (isAlertVisible.current) return;
+
     try {
       if (UsageModule) {
         const hasUsagePerm = await UsageModule.checkPermission();
         if (!hasUsagePerm) {
+          isAlertVisible.current = true;
           Alert.alert(
             'Activity Access',
             'Please enable "Usage Access" in settings to monitor screen time.',
             [
               {
                 text: 'Open Settings',
-                onPress: () => UsageModule.openSettings(),
+                onPress: () => {
+                  isAlertVisible.current = false;
+                  UsageModule.openSettings();
+                },
+              },
+              {
+                text: 'Later',
+                onPress: () => (isAlertVisible.current = false),
               },
             ],
             { cancelable: false },
           );
           return;
         }
+
         const isBatteryUnrestricted = await UsageModule.isBatteryIgnored();
         if (!isBatteryUnrestricted) {
+          isAlertVisible.current = true;
           Alert.alert(
             'Battery Optimization',
             'Set battery usage to "Unrestricted" for continuous protection.',
             [
               {
                 text: 'Configure Battery',
-                onPress: () => UsageModule.openBatterySettings(),
+                onPress: () => {
+                  isAlertVisible.current = false;
+                  UsageModule.openBatterySettings();
+                },
+              },
+              {
+                text: 'Later',
+                onPress: () => (isAlertVisible.current = false),
               },
             ],
             { cancelable: false },
@@ -73,13 +104,13 @@ const HomeScreen = ({ navigation }) => {
       }
     } catch (err) {
       console.log('Permission Error:', err.message);
+      isAlertVisible.current = false;
     }
   };
 
   const performUniversalSync = async () => {
-
-    if(!monitoringRef.current){
-      console.log("Mositoring stopped, skipping sync.");
+    if (!monitoringRef.current) {
+      console.log('Monitoring stopped, skipping sync.');
       return;
     }
     try {
@@ -111,7 +142,12 @@ const HomeScreen = ({ navigation }) => {
       }
 
       const lockRes = await apiService.getLatestDeviceInfo(user.id);
-      if (lockRes?.success) setIsLocked(!!lockRes.data.isLocked);
+      if (lockRes?.success) {
+        setIsLocked(!!lockRes.data.isLocked);
+        if (lockRes.data.remainingSeconds !== undefined) {
+          setRemainingSeconds(lockRes.data.remainingSeconds);
+        }
+      }
 
       console.log('--- Heartbeat Sync Success ---');
     } catch (e) {
@@ -119,7 +155,17 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
-  // ✅ MONITORING CONTROL LOGIC (Start/Stop)
+  // Local 1-second countdown
+  useEffect(() => {
+    let interval;
+    if (isMonitoring && remainingSeconds > 0 && !isLocked) {
+      interval = setInterval(() => {
+        setRemainingSeconds(prev => (prev > 0 ? prev - 1 : 0));
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isMonitoring, remainingSeconds, isLocked]);
+
   const startMonitoringEngine = async () => {
     const channelId = await notifee.createChannel({
       id: 'guard',
@@ -138,15 +184,15 @@ const HomeScreen = ({ navigation }) => {
     monitoringRef.current = true;
     setIsMonitoring(true);
 
-    performUniversalSync(); // Immediate Sync
+    performUniversalSync();
     BackgroundTimer.runBackgroundTimer(performUniversalSync, 15000);
-    setIsMonitoring(true);
     Alert.alert('Protection ON', 'The device monitoring has started.');
   };
 
   const stopMonitoringEngine = async () => {
     monitoringRef.current = false;
     setIsMonitoring(false);
+    setRemainingSeconds(0);
     BackgroundTimer.stopBackgroundTimer();
     await notifee.cancelAllNotifications();
     Alert.alert('Protection OFF', 'Background monitoring is now paused.');
@@ -162,7 +208,6 @@ const HomeScreen = ({ navigation }) => {
     setLoading(false);
   };
 
-  // UI Protection logic only
   useEffect(() => {
     const handleHardwareLock = async () => {
       if (UsageModule && typeof UsageModule.activateLock === 'function') {
@@ -177,13 +222,16 @@ const HomeScreen = ({ navigation }) => {
       () => isLocked,
     );
 
-    // ✅ Silent lock check - Phone unlock karne ke liye polling humesha slow background mein rahegi
     const silentLockCheck = setInterval(async () => {
       const userStr = await AsyncStorage.getItem('user');
       if (userStr) {
         const user = JSON.parse(userStr);
         const res = await apiService.getLatestDeviceInfo(user.id);
-        if (res?.success) setIsLocked(!!res.data.isLocked);
+        if (res?.success) {
+          setIsLocked(!!res.data.isLocked);
+          if (res.data.remainingSeconds !== undefined)
+            setRemainingSeconds(res.data.remainingSeconds);
+        }
       }
     }, 10000);
 
@@ -206,7 +254,7 @@ const HomeScreen = ({ navigation }) => {
       <LockScreen visible={isLocked} />
       <StatusBar
         barStyle="light-content"
-        translucent
+        translucent={true}
         backgroundColor="transparent"
       />
       <LinearGradient
@@ -229,13 +277,21 @@ const HomeScreen = ({ navigation }) => {
               <Text style={styles.logoutText}>Logout</Text>
             </TouchableOpacity>
           </View>
+
+          {isMonitoring && remainingSeconds > 0 && (
+            <View style={styles.timerWrapper}>
+              <Text style={styles.timerLabel}>Time Remaining</Text>
+              <Text style={styles.timerValue}>
+                {formatTime(remainingSeconds)}
+              </Text>
+            </View>
+          )}
         </SafeAreaView>
       </LinearGradient>
 
       <View style={styles.contentCard}>
         <View style={styles.buttonWrapper}>
           <PrimaryButton
-            // ✅ Button label depends on state
             title={
               loading
                 ? 'Processing...'
@@ -256,10 +312,12 @@ const HomeScreen = ({ navigation }) => {
   );
 };
 
-// Styles Unchanged...
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.gradientEnd },
-  header: { height: height * 0.25, width: '100%', paddingHorizontal: 20 },
+
+  // ✅ STYLES FIXED: Larger header to fit timer and logo properly
+  header: { height: height * 0.29, width: '100%', paddingHorizontal: 20 },
+
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -276,10 +334,27 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.4)',
   },
   logoutText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 11 },
+
+  timerWrapper: { marginTop: 15, alignItems: 'center' },
+  timerLabel: {
+    color: 'white',
+    fontSize: 11,
+    fontWeight: 'bold',
+    opacity: 0.8,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  timerValue: {
+    color: 'white',
+    fontSize: 45,
+    fontWeight: '900',
+    marginTop: -5,
+  },
+
   contentCard: {
     flex: 1,
     backgroundColor: '#F8FAFF',
-    marginTop: -40,
+    marginTop: -30, // Reduced overlap so timer is visible
     borderTopLeftRadius: 35,
     borderTopRightRadius: 35,
     justifyContent: 'center',
