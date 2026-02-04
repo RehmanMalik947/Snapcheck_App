@@ -1,4 +1,4 @@
-package com.snapcheck
+package com.parental.snapcheck
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate

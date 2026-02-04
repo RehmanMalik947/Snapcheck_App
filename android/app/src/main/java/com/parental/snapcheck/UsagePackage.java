@@ -1,4 +1,4 @@
-package com.snapcheck;
+package com.parental.snapcheck;
 import com.facebook.react.ReactPackage;
 import com.facebook.react.bridge.NativeModule;
 import com.facebook.react.bridge.ReactApplicationContext;

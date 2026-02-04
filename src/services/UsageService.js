@@ -37,7 +37,7 @@ export const getDeviceUsageStats = async () => {
                 usageTime: displayTime,
             };
         })
-        .filter(app => app.usageMinutes > 0 && app.packageName !== 'com.snapcheck') 
+        .filter(app => app.usageMinutes > 0 && app.packageName !== 'com.parental.snapcheck') 
         .sort((a, b) => b.usageMinutes - a.usageMinutes);
 
     } catch (e) {

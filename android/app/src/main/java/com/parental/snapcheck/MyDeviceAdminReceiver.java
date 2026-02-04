@@ -1,5 +1,4 @@
-package com.snapcheck;
-
+package com.parental.snapcheck;
 import android.app.admin.DeviceAdminReceiver;
 import android.content.Context;
 import android.content.Intent;

@@ -1,5 +1,4 @@
-package com.snapcheck;
-
+package com.parental.snapcheck;
 import android.app.usage.UsageStats;
 import android.app.usage.UsageStatsManager;
 import android.content.Context;

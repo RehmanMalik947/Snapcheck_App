@@ -21,6 +21,7 @@ const LoginScreen = ({ navigation }) => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
 
   // 3. handleLogin function component ke andar laya
   const handleLogin = async () => {
@@ -98,10 +99,13 @@ const LoginScreen = ({ navigation }) => {
               secureTextEntry
               value={password}
               onChangeText={setPassword}
+              secureTextEntry={!isPasswordVisible}
             />
-            <Text style={{ marginRight: 10, color: COLORS.placeholder }}>
-              👁️
-            </Text>
+            <TouchableOpacity onPress={() => setIsPasswordVisible(!isPasswordVisible)}>
+              <Text style={{ marginRight: 10, color: COLORS.placeholder }}>
+                {isPasswordVisible ? '👁️' : '👁️'}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
 
