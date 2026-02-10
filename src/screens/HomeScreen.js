@@ -1,27 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react'; // Added useRef
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  View,
-  StyleSheet,
-  Image,
-  Text,
-  Dimensions,
-  StatusBar,
-  Alert,
-  TouchableOpacity,
-  BackHandler,
-  NativeModules,
-  AppState,
+  View, StyleSheet, Image, Text, Dimensions, StatusBar, Alert,
+  TouchableOpacity, BackHandler, NativeModules, AppState, ScrollView
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BackgroundTimer from 'react-native-background-timer';
 import notifee, { AndroidImportance } from '@notifee/react-native';
+import { Bell, LayoutDashboard, FileText, Activity, User } from 'lucide-react-native';
 
-// Custom Components & Services
+// Services
 import LockScreen from './LockScreen';
 import { COLORS } from '../constants/Colors';
-import PrimaryButton from '../components/PrimaryButton';
 import apiService from '../services/apiService';
 import { getDeviceDataForConsole } from '../services/DeviceService';
 import { getDeviceUsageStats } from '../services/UsageService';
@@ -30,344 +21,254 @@ const { width, height } = Dimensions.get('window');
 const { UsageModule } = NativeModules;
 
 const HomeScreen = ({ navigation }) => {
+  // Logic States
   const [isLocked, setIsLocked] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [isMonitoring, setIsMonitoring] = useState(false);
+  const [dbData, setDbData] = useState(null);
   const [remainingSeconds, setRemainingSeconds] = useState(0);
+  const [screenTimeToday, setScreenTimeToday] = useState("0h 0m");
+  const [appsCount, setAppsCount] = useState(0);
+  const [isMonitoring, setIsMonitoring] = useState(false);
 
   const monitoringRef = useRef(false);
-  const isAlertVisible = useRef(false); // ✅ Prevents duplicate popups
+  const isAlertVisible = useRef(false);
 
-  // HELPER: Format seconds to HH:MM:SS
-  const formatTime = totalSeconds => {
-    if (totalSeconds <= 0) return '00:00';
+  // ✅ TIMER FORMATTER: Dynamic breakdown
+  const formatTimeText = (totalSeconds) => {
+    if (totalSeconds <= 0) return '0 hours 0 mins';
     const hrs = Math.floor(totalSeconds / 3600);
     const mins = Math.floor((totalSeconds % 3600) / 60);
     const secs = totalSeconds % 60;
-    return `${hrs > 0 ? hrs + ':' : ''}${mins < 10 ? '0' + mins : mins}:${
-      secs < 10 ? '0' + secs : secs
-    }`;
+
+    // Displays hours only if more than 0
+    let timeStr = hrs > 0 ? `${hrs}h ` : "";
+    timeStr += `${mins}m ${secs}s`; // Added seconds for visual feedback on Mobile
+    return timeStr;
   };
 
-  const checkAndRequestAllPermissions = async () => {
-    // ✅ Exit if an alert is already shown to avoid "Alert Fatigue"
-    if (isAlertVisible.current) return;
+  // --- LOGIC: MASTER AUTO-SYNC ---
+  const performPulse = async () => {
+    if (!monitoringRef.current) return;
 
     try {
-      if (UsageModule) {
-        const hasUsagePerm = await UsageModule.checkPermission();
-        if (!hasUsagePerm) {
-          isAlertVisible.current = true;
-          Alert.alert(
-            'Activity Access',
-            'Please enable "Usage Access" in settings to monitor screen time.',
-            [
-              {
-                text: 'Open Settings',
-                onPress: () => {
-                  isAlertVisible.current = false;
-                  UsageModule.openSettings();
-                },
-              },
-              {
-                text: 'Later',
-                onPress: () => (isAlertVisible.current = false),
-              },
-            ],
-            { cancelable: false },
-          );
-          return;
-        }
-
-        const isBatteryUnrestricted = await UsageModule.isBatteryIgnored();
-        if (!isBatteryUnrestricted) {
-          isAlertVisible.current = true;
-          Alert.alert(
-            'Battery Optimization',
-            'Set battery usage to "Unrestricted" for continuous protection.',
-            [
-              {
-                text: 'Configure Battery',
-                onPress: () => {
-                  isAlertVisible.current = false;
-                  UsageModule.openBatterySettings();
-                },
-              },
-              {
-                text: 'Later',
-                onPress: () => (isAlertVisible.current = false),
-              },
-            ],
-            { cancelable: false },
-          );
-        }
-      }
-    } catch (err) {
-      console.log('Permission Error:', err.message);
-      isAlertVisible.current = false;
-    }
-  };
-
-  const performUniversalSync = async () => {
-    if (!monitoringRef.current) {
-      console.log('Monitoring stopped, skipping sync.');
-      return;
-    }
-    try {
+      console.log('--- MASTER SYNC PULSE STARTING ---');
       const userStr = await AsyncStorage.getItem('user');
       if (!userStr) return;
       const user = JSON.parse(userStr);
 
+      // 1. Send usage heartbeat (seconds calculator)
       await apiService.post('/activity/heartbeat', { userId: user.id });
 
+      // 2. Fetch Screen time (Today's summary for Blue card)
+      const summaryRes = await apiService.getActivitySummary(user.id);
+      if (summaryRes.success) {
+        setScreenTimeToday(summaryRes.screenTime);
+      }
+
+      // 3. System Hardware state (Battery, WiFi)
       const deviceInfo = await getDeviceDataForConsole();
       if (deviceInfo) {
         await apiService.syncDeviceData({
           userId: user.id,
-          deviceModel: deviceInfo['Device Model'] || 'Device',
-          uniqueId: deviceInfo['Unique ID (IMEI)'] || 'UniqueId',
-          battery: deviceInfo['Battery'] || '0%',
-          wifiStatus: deviceInfo['Wifi Status'] || 'OFF',
-          locationStatus: deviceInfo['Location Tracker'] || 'OFF',
-          deviceTimestamp: deviceInfo['Timestamp'] || new Date().toISOString(),
+          deviceModel: deviceInfo['Device Model'],
+          uniqueId: deviceInfo['Unique ID (IMEI)'],
+          battery: deviceInfo['Battery'],
+          wifiStatus: deviceInfo['Wifi Status'],
+          locationStatus: deviceInfo['Location Tracker'],
+          deviceTimestamp: deviceInfo['Timestamp'],
         });
       }
 
+      // 4. Scan Apps list for Purple card count
       const appsData = await getDeviceUsageStats();
       if (appsData && appsData.length > 0) {
-        await apiService.post('/apps/sync', {
-          userId: user.id,
-          appsList: appsData,
-        });
+        setAppsCount(appsData.length);
+        await apiService.post('/apps/sync', { userId: user.id, appsList: appsData });
       }
 
-      const lockRes = await apiService.getLatestDeviceInfo(user.id);
-      if (lockRes?.success) {
-        setIsLocked(!!lockRes.data.isLocked);
-        if (lockRes.data.remainingSeconds !== undefined) {
-          setRemainingSeconds(lockRes.data.remainingSeconds);
+      // 5. FETCH LOCK/TIMER STATUS (The Hardware Sync)
+      const res = await apiService.getLatestDeviceInfo(user.id);
+      if (res?.success) {
+        const live = res.data;
+        setDbData(live);
+        setIsLocked(!!live.isLocked);
+
+        // ✅ Syncing the Countdown: Override local seconds with server truth every 15s
+        if (live.remainingSeconds !== undefined) {
+          setRemainingSeconds(live.remainingSeconds);
         }
       }
-
-      console.log('--- Heartbeat Sync Success ---');
     } catch (e) {
-      console.log('Pulse Error:', e.message);
+      console.log('Sync System Lag:', e.message);
     }
   };
 
-  // Local 1-second countdown
+  const activateBackgroundEngine = async () => {
+    const channelId = await notifee.createChannel({ id: 'active_monitor', name: 'Safe guard' });
+    await notifee.displayNotification({
+      title: 'SnapCheck Protective Shield: Active',
+      body: 'Usage and security states are being monitored.',
+      android: { channelId, asForegroundService: true, ongoing: true },
+    });
+
+    monitoringRef.current = true;
+    setIsMonitoring(true);
+    performPulse(); // Initial Pulse
+    BackgroundTimer.runBackgroundTimer(performPulse, 15000); // 15s master loop
+  };
+
+  // ✅ LOGIC: LOCAL UI TICKER (Counts down every 1 second)
   useEffect(() => {
-    let interval;
+    let ticker;
     if (isMonitoring && remainingSeconds > 0 && !isLocked) {
-      interval = setInterval(() => {
+      ticker = setInterval(() => {
         setRemainingSeconds(prev => (prev > 0 ? prev - 1 : 0));
       }, 1000);
     }
-    return () => clearInterval(interval);
-  }, [isMonitoring, remainingSeconds, isLocked]);
-
-  const startMonitoringEngine = async () => {
-    const channelId = await notifee.createChannel({
-      id: 'guard',
-      name: 'Safe Guard',
-    });
-    await notifee.displayNotification({
-      title: 'Monitoring Engaged',
-      body: 'Child device activity is synced with parent dashboard.',
-      android: {
-        channelId,
-        asForegroundService: true,
-        ongoing: true,
-        pressAction: { id: 'default' },
-      },
-    });
-    monitoringRef.current = true;
-    setIsMonitoring(true);
-
-    performUniversalSync();
-    BackgroundTimer.runBackgroundTimer(performUniversalSync, 15000);
-    Alert.alert('Protection ON', 'The device monitoring has started.');
-  };
-
-  const stopMonitoringEngine = async () => {
-    monitoringRef.current = false;
-    setIsMonitoring(false);
-    setRemainingSeconds(0);
-    BackgroundTimer.stopBackgroundTimer();
-    await notifee.cancelAllNotifications();
-    Alert.alert('Protection OFF', 'Background monitoring is now paused.');
-  };
-
-  const handleToggleMonitoring = async () => {
-    setLoading(true);
-    if (isMonitoring) {
-      await stopMonitoringEngine();
-    } else {
-      await startMonitoringEngine();
-    }
-    setLoading(false);
-  };
+    return () => clearInterval(ticker);
+  }, [remainingSeconds, isMonitoring, isLocked]);
 
   useEffect(() => {
-    const handleHardwareLock = async () => {
-      if (UsageModule && typeof UsageModule.activateLock === 'function') {
-        if (isLocked) await UsageModule.activateLock();
-        else await UsageModule.deactivateLock();
-      }
-    };
-    handleHardwareLock();
+    activateBackgroundEngine();
 
-    const backHandler = BackHandler.addEventListener(
-      'hardwareBackPress',
-      () => isLocked,
-    );
-
-    const silentLockCheck = setInterval(async () => {
-      const userStr = await AsyncStorage.getItem('user');
-      if (userStr) {
-        const user = JSON.parse(userStr);
-        const res = await apiService.getLatestDeviceInfo(user.id);
-        if (res?.success) {
-          setIsLocked(!!res.data.isLocked);
-          if (res.data.remainingSeconds !== undefined)
-            setRemainingSeconds(res.data.remainingSeconds);
-        }
-      }
-    }, 10000);
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => (isLocked ? true : false));
 
     return () => {
       backHandler.remove();
-      clearInterval(silentLockCheck);
+      BackgroundTimer.stopBackgroundTimer();
     };
-  }, [isLocked]);
-
-  useEffect(() => {
-    checkAndRequestAllPermissions();
-    const subscription = AppState.addEventListener('change', nextAppState => {
-      if (nextAppState === 'active') checkAndRequestAllPermissions();
-    });
-    return () => subscription.remove();
   }, []);
 
+  useEffect(() => {
+    if (UsageModule) {
+      if (isLocked) UsageModule.activateLock();
+      else UsageModule.deactivateLock();
+    }
+  }, [isLocked]);
+
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <LockScreen visible={isLocked} />
-      <StatusBar
-        barStyle="light-content"
-        translucent={true}
-        backgroundColor="transparent"
-      />
-      <LinearGradient
-        colors={[COLORS.gradientStart, COLORS.gradientEnd]}
-        style={styles.header}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-      >
-        <SafeAreaView edges={['top']}>
-          <View style={styles.headerRow}>
-            <Image
-              source={require('../assets/logo.png')}
-              style={styles.logo}
-              resizeMode="contain"
-            />
-            <TouchableOpacity
-              onPress={() => navigation.replace('Login')}
-              style={styles.logoutBtn}
-            >
-              <Text style={styles.logoutText}>Logout</Text>
-            </TouchableOpacity>
+      <StatusBar barStyle="dark-content" />
+
+      {/* --- HEADER --- */}
+      <View style={styles.headerBar}>
+        <Image source={require('../assets/logo.png')} style={styles.logoTop} resizeMode="contain" />
+        <TouchableOpacity style={{ position: 'relative' }}>
+          <Bell color="#1e293b" size={26} />
+          <View style={styles.alertDot} />
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 120 }}>
+        <Text style={styles.pageLabel}>Parental Control</Text>
+
+        {/* --- MAIN CARD: DYNAMIC LOCK COUNTDOWN --- */}
+        <LinearGradient colors={['#4F46E5', '#7C3AED']} style={styles.topDashboardCard}>
+          <View style={styles.flexRowBetween}>
+            <View>
+              <Text style={styles.tinyLabelWhite}>ACTIVE DEVICE</Text>
+              <Text style={styles.boldModelText}>{dbData?.deviceModel || dbData?.device_model || "Scanning Device..."}</Text>
+            </View>
+            <View style={styles.activePill}><Text style={styles.activePillText}>Online</Text></View>
           </View>
 
-          {isMonitoring && remainingSeconds > 0 && (
-            <View style={styles.timerWrapper}>
-              <Text style={styles.timerLabel}>Time Remaining</Text>
-              <Text style={styles.timerValue}>
-                {formatTime(remainingSeconds)}
-              </Text>
+          <View style={styles.timerCenterArea}>
+            <View style={styles.circleAvatar}>
+              <Image source={{ uri: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Aima' }} style={{ width: 55, height: 55, borderRadius: 27.5 }} />
             </View>
-          )}
-        </SafeAreaView>
-      </LinearGradient>
+            <View style={{ flex: 1 }}>
+              <View style={styles.timeLabelRow}>
+                <Text style={{ color: 'white' }}>🕒</Text>
+                {/* ✅ DISPLAYING THE LIVE SECOND-BY-SECOND TIMER */}
+                <Text style={styles.bigTimerTxt}>{formatTimeText(remainingSeconds)} left</Text>
+              </View>
 
-      <View style={styles.contentCard}>
-        <View style={styles.buttonWrapper}>
-          <PrimaryButton
-            title={
-              loading
-                ? 'Processing...'
-                : isMonitoring
-                ? 'Stop Monitoring'
-                : "Monitor Child's Device"
-            }
-            onPress={handleToggleMonitoring}
-          />
-          <Text style={styles.guardianText}>
-            {isMonitoring
-              ? 'ENGINE IS RUNNING IN BACKGROUND'
-              : 'SYSTEM IS IDLE (TAP TO START)'}
-          </Text>
+              <View style={styles.barWrap}>
+                {/* ✅ DYNAMIC PROGRESS BAR: Visual Fill Ratio */}
+                <View style={[styles.barCurrentFill, {
+                  width: (dbData?.timerLimit > 0 && remainingSeconds > 0)
+                    ? `${(remainingSeconds / (dbData.timerLimit * 60)) * 100}%`
+                    : '0%'
+                }]} />
+              </View>
+            </View>
+          </View>
+        </LinearGradient>
+
+        {/* --- DYNAMIC GRID --- */}
+        <View style={styles.summaryGrid}>
+          {/* Box 1: Calculated Screen Usage (Matches Website) */}
+          <View style={[styles.infoBox, { backgroundColor: '#3B82F6' }]}>
+            <Text style={styles.boxTag}>Screen Time Today</Text>
+            <Text style={styles.boxLargeVal}>{screenTimeToday}</Text>
+            <View style={styles.tagPill}><Text style={styles.tagText}>↓ LIVE</Text></View>
+          </View>
+
+          {/* Box 2: Total unique apps scanned */}
+          <View style={[styles.infoBox, { backgroundColor: '#9333EA' }]}>
+            <Text style={styles.boxTag}>Apps Opened Today</Text>
+            <Text style={styles.boxLargeVal}>{appsCount || "0"}</Text>
+            <View style={styles.tagPill}><Text style={styles.tagText}>↑ SYNC</Text></View>
+          </View>
         </View>
+
+        <TouchableOpacity
+          style={styles.exitRow}
+          onPress={async () => {
+            BackgroundTimer.stopBackgroundTimer();
+            await AsyncStorage.clear();
+            navigation.replace('Login');
+          }}
+        >
+          <Text style={styles.exitText}>Secure Monitor Active • Sign Out</Text>
+        </TouchableOpacity>
+      </ScrollView>
+
+      {/* --- TAB BAR MOCK --- */}
+      <View style={styles.footerNav}>
+        <NavElem icon={LayoutDashboard} label="Dashboard" active />
+        <NavElem icon={FileText} label="Keylogger" />
+        <NavElem icon={Activity} label="Activity" />
+        <NavElem icon={User} label="Profile" />
       </View>
-    </View>
+    </SafeAreaView>
   );
 };
 
+const NavElem = ({ icon: Icon, label, active }) => (
+  <View style={{ alignItems: 'center' }}>
+    <Icon color={active ? '#4F46E5' : '#94A3B8'} size={24} />
+    <Text style={{ fontSize: 10, fontWeight: '900', color: active ? '#4F46E5' : '#94A3B8', marginTop: 5 }}>{label}</Text>
+  </View>
+);
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.gradientEnd },
-
-  // ✅ STYLES FIXED: Larger header to fit timer and logo properly
-  header: { height: height * 0.29, width: '100%', paddingHorizontal: 20 },
-
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  logo: { width: 140, height: 40 },
-  logoutBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
-  },
-  logoutText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 11 },
-
-  timerWrapper: { marginTop: 15, alignItems: 'center' },
-  timerLabel: {
-    color: 'white',
-    fontSize: 11,
-    fontWeight: 'bold',
-    opacity: 0.8,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  timerValue: {
-    color: 'white',
-    fontSize: 45,
-    fontWeight: '900',
-    marginTop: -5,
-  },
-
-  contentCard: {
-    flex: 1,
-    backgroundColor: '#F8FAFF',
-    marginTop: -30, // Reduced overlap so timer is visible
-    borderTopLeftRadius: 35,
-    borderTopRightRadius: 35,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 30,
-  },
-  buttonWrapper: { width: '100%', alignItems: 'center' },
-  guardianText: {
-    marginTop: 15,
-    color: '#94a3b8',
-    fontSize: 10,
-    fontWeight: '800',
-  },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
+  headerBar: { flexDirection: 'row', justifyContent: 'space-between', padding: 25, alignItems: 'center' },
+  logoTop: { width: 120, height: 35 },
+  alertDot: { width: 10, height: 10, backgroundColor: 'red', borderRadius: 5, position: 'absolute', right: 2, top: 0, borderWidth: 1.5, borderColor: 'white' },
+  pageLabel: { fontSize: 20, fontWeight: '900', color: '#BE185D', marginHorizontal: 25, marginBottom: 20 },
+  topDashboardCard: { marginHorizontal: 20, borderRadius: 28, padding: 25, elevation: 12 },
+  flexRowBetween: { flexDirection: 'row', justifyContent: 'space-between' },
+  tinyLabelWhite: { color: 'white', opacity: 0.7, fontSize: 10, fontWeight: 'bold' },
+  boldModelText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
+  activePill: { backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 10 },
+  activePillText: { color: 'white', fontSize: 9, fontWeight: 'bold' },
+  timerCenterArea: { flexDirection: 'row', marginTop: 25, gap: 15, alignItems: 'center' },
+  circleAvatar: { width: 55, height: 55, borderRadius: 27.5, backgroundColor: 'white' },
+  timeLabelRow: { flexDirection: 'row', gap: 5, alignItems: 'center', marginBottom: 10 },
+  bigTimerTxt: { color: 'white', fontSize: 15, fontWeight: 'bold' },
+  barWrap: { height: 7, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 10 },
+  barCurrentFill: { height: 7, backgroundColor: 'white', borderRadius: 10 },
+  summaryGrid: { flexDirection: 'row', gap: 15, paddingHorizontal: 20, marginTop: 25 },
+  infoBox: { flex: 1, height: 170, borderRadius: 25, padding: 18, justifyContent: 'space-between', elevation: 5 },
+  boxTag: { color: 'white', fontSize: 11, fontWeight: 'bold', opacity: 0.9 },
+  boxLargeVal: { color: 'white', fontSize: 26, fontWeight: 'bold' },
+  tagPill: { alignSelf: 'flex-start', backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  tagText: { color: 'white', fontSize: 9, fontWeight: '900' },
+  exitRow: { alignSelf: 'center', marginTop: 35 },
+  exitText: { color: '#94a3b8', fontSize: 10, fontWeight: '900', textDecorationLine: 'underline' },
+  footerNav: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: '#f1f5f9', paddingVertical: 14, justifyContent: 'space-around', position: 'absolute', bottom: 0, width: '100%', backgroundColor: 'white' }
 });
 
 export default HomeScreen;

@@ -74,6 +74,16 @@ class ApiService {
     }
   }
 
+  async getActivitySummary(userId) {
+    try {
+      // This matches the Dashboard's route exactly: /api/activity/summary/:userId
+      const response = await this.api.get(`/activity/summary/${userId}`);
+      return response.data; 
+    } catch (error) {
+      return { success: false, message: "Summary fetch failed" };
+    }
+  }
+
   // Generic methods agar baad mein kisi aur kaam ke liye chahiye hon
   get(path, params = {}) {
     return this.api.get(path, { params });
