@@ -1,97 +1,105 @@
-// src/services/ApiService.js
-import axios from "axios";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import config from "react-native-config";
-// Android Emulator ke liye 10.0.2.2, Physical device ke liye laptop ka IP
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_URL = config.BASE_API_URL || "https://appbackend.snapcheck.io/api";
-class ApiService { 
-  constructor() {  
+// 🛑 IMPORTANT: Update this to your current laptop IP every time it changes!
+const API_URL = 'http://192.168.10.13:3000/api';
+
+class ApiService {
+  constructor() {
     this.api = axios.create({
       baseURL: API_URL,
       headers: {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
       },
-    });  
-
-    // Interceptor: Har request se pehle AsyncStorage se token nikaal kar attach karega
-    this.api.interceptors.request.use(async (config) => {
-      const token = await AsyncStorage.getItem("authToken");
-      if (token) {
-        config.headers["Authorization"] = `Bearer ${token}`;
-      }
-      return config;
-    }, (error) => {
-      return Promise.reject(error);
     });
+
+    // Auto-attach token to every request
+    this.api.interceptors.request.use(
+      async config => {
+        const token = await AsyncStorage.getItem('authToken');
+        if (token) {
+          config.headers['Authorization'] = `Bearer ${token}`;
+        }
+        return config;
+      },
+      error => Promise.reject(error),
+    );
   }
 
-  // Login Method
-  async login(data) {
-    try {
-      const response = await this.api.post("/auth/login", data);
-      
-      // Agar backend success return kare
-      if (response.data.success) {
-        const { token, user } = response.data;
-        await AsyncStorage.setItem("authToken", token);
-        await AsyncStorage.setItem("user", JSON.stringify(user));
-      }
-      return response.data;
-    } catch (error) {
-      return {
-        success: false,
-        message: error.response?.data?.message || "Login failed"
-      };
+  /**
+   * ✅ Re-named to "login" so you don't have to change your LoginScreen.js
+   * but it points to the new "child" route.
+   */
+  // ✅ Corrected version that handles objects
+async login(data) { // data is an object: { email, password }
+  try {
+    const response = await this.api.post('/auth/child/login', data);
+
+    if (response.data && response.data.token) {
+      await AsyncStorage.setItem('authToken', response.data.token);
+      await AsyncStorage.setItem('user', JSON.stringify(response.data));
+      return { success: true, data: response.data };
     }
+    return { success: false, message: "Authentication failed" };
+  } catch (error) {
+    console.log("Login Logic Error:", error.response?.data || error.message);
+    return {
+      success: false,
+      // Pass the specific error from the backend if it exists
+      message: error.response?.data?.error || error.response?.data?.message || 'Login failed',
+    };
   }
+}
 
-  // Device Info Sync Method
+  // Heartbeat & Usage pulses
   async syncDeviceData(data) {
     try {
-      // Backend route /api/device/sync
-      const response = await this.api.post("/device/sync", data);
+      const response = await this.api.post('/device/sync', data);
       return response.data;
     } catch (error) {
-      return {
-        success: false,
-        message: error.response?.data?.message || "Sync failed"
-      };
+      return { success: false };
     }
   }
 
   async getLatestDeviceInfo(userId) {
     try {
-      // Backend route: /api/device/latest/:userId
       const response = await this.api.get(`/device/latest/${userId}`);
       return response.data;
     } catch (error) {
-      console.log("Get Info Error:", error.message);
-      return {
-        success: false,
-        message: error.response?.data?.message || "Failed to fetch status"
-      };
+      return { success: false };
     }
   }
 
   async getActivitySummary(userId) {
     try {
-      // This matches the Dashboard's route exactly: /api/activity/summary/:userId
       const response = await this.api.get(`/activity/summary/${userId}`);
-      return response.data; 
+      return response.data;
     } catch (error) {
-      return { success: false, message: "Summary fetch failed" };
+      return { success: false };
     }
   }
 
-  // Generic methods agar baad mein kisi aur kaam ke liye chahiye hon
-  get(path, params = {}) {
-    return this.api.get(path, { params });
+  // Custom POST helper
+  async post(path, data) {
+    try {
+      const response = await this.api.post(path, data);
+      return response.data;
+    } catch (error) {
+      console.log(`POST ERROR [${path}]:`, error.message);
+      return { success: false };
+    }
   }
 
-  post(path, data) {
-    return this.api.post(path, data);
+  // Custom GET helper
+  async get(path) {
+    try {
+      const response = await this.api.get(path);
+      return response.data;
+    } catch (error) {
+      console.log(`GET ERROR [${path}]:`, error.message);
+      return { success: false };
+    }
   }
 }
-// Singleton instance export kar rahe hain
+
 export default new ApiService();
