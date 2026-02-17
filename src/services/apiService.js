@@ -2,8 +2,8 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // 🛑 IMPORTANT: Update this to your current laptop IP every time it changes!
-const API_URL = 'http://192.168.10.13:3000/api';
-
+// const API_URL = 'http://192.168.10.13:3000/api';
+const API_URL=process.env.BASE_API_URL || 'https://appbackend.snapcheck.io/api';
 class ApiService {
   constructor() {
     this.api = axios.create({
